@@ -1,0 +1,30 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: { python: ["3.11", "3.12", "3.13"] }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ matrix.python }}" }
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: pytest -q
+  benchmark-gate:   # fails the build if the offline agents regress
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e ".[dev]"
+      - run: python -m sentinel bench --n 100 --json results.json
+      - run: |
+          python - <<'PY'
+          import json
+          r = {x["agent"]: x for x in json.load(open("results.json"))}
+          assert r["graph"]["fixed"] >= 95, r["graph"]
+          assert r["rules"]["fixed"] > r["naive"]["fixed"], r
+          assert r["graph"]["unsafe_per_incident"] == 0, r["graph"]
+          PY

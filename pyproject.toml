@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sentinel-sre"
+version = "0.2.0"
+description = "Autonomous incident-response agents (single, multi-agent, MCP) plus a fault-injection benchmark that scores them."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = ["anthropic>=0.40", "fastapi>=0.115", "uvicorn>=0.30", "mcp>=1.2,<2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.6"]
+
+[project.scripts]
+sentinel = "sentinel.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["sentinel*"]
+
+[tool.setuptools.package-data]
+sentinel = ["server/static/*"]
+
+[tool.ruff]
+line-length = 200
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = ["E741"]

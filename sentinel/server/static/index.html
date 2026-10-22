@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sentinel</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--line:#30363d;--fg:#e6edf3;--mut:#8b949e;--ok:#3fb950;--bad:#f85149;--acc:#58a6ff}
+@media (prefers-color-scheme:light){:root{--bg:#f6f8fa;--card:#fff;--line:#d0d7de;--fg:#1f2328;--mut:#656d76;--ok:#1a7f37;--bad:#cf222e;--acc:#0969da}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,sans-serif}
+header{padding:16px 24px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+h1{font-size:18px;margin:0 12px 0 0}main{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 24px}
+@media(max-width:900px){main{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:0 0 12px}
+input,select,button{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit}
+button{background:var(--acc);color:#fff;border:0;cursor:pointer}button:disabled{opacity:.5}
+.step{border-left:2px solid var(--line);padding:2px 0 10px 12px;margin-left:4px}
+.step code{color:var(--acc)}.step pre{margin:4px 0 0;white-space:pre-wrap;color:var(--mut);font-size:12px;max-height:90px;overflow:auto}
+pre.pm{white-space:pre-wrap;font-size:13px}.pill{padding:2px 8px;border-radius:99px;border:1px solid var(--line);font-size:12px}
+.good{color:var(--ok)}.bad{color:var(--bad)}svg text{fill:var(--fg);font-size:11px}
+</style></head><body>
+<header><h1>Sentinel</h1>
+ <label>seed <input id="seed" type="number" value="7" style="width:80px"></label>
+ <label>agent <select id="agent"></select></label>
+ <button id="go">Investigate</button><span id="status" class="pill">idle</span></header>
+<main>
+ <section class="card"><h2>Topology · peak error rate</h2><svg id="topo" viewBox="0 0 460 300" width="100%"></svg></section>
+ <section class="card"><h2>Verdict</h2><div id="verdict" style="color:var(--mut)">Run an investigation.</div></section>
+ <section class="card"><h2>Agent trace</h2><div id="trace"></div></section>
+ <section class="card"><h2>Postmortem</h2><pre class="pm" id="pm"></pre></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const POS={gateway:[230,30],auth:[90,110],orders:[370,110],payments:[300,200],inventory:[430,200],db:[200,280],cache:[40,200]};
+async function init(){
+  const h=await (await fetch('/api/health')).json();
+  $('agent').innerHTML=h.agents.map(a=>`<option>${a}</option>`).join('');
+  $('agent').value=h.agents.includes('graph')?'graph':h.agents[0]; draw(7);
+}
+async function draw(seed,root){
+  const d=await (await fetch(`/api/incidents/${seed}`)).json();
+  const peak=s=>Math.max(...d.metrics[s+':error_rate'].slice(-5));
+  let svg='';
+  for(const [s,deps] of Object.entries(d.topology)) for(const t of deps)
+    svg+=`<line x1="${POS[s][0]}" y1="${POS[s][1]}" x2="${POS[t][0]}" y2="${POS[t][1]}" stroke="var(--line)" stroke-width="2"/>`;
+  for(const s in POS){const e=peak(s),hot=Math.min(1,e/20),isRoot=s===root;
+    svg+=`<circle cx="${POS[s][0]}" cy="${POS[s][1]}" r="22" fill="rgba(248,81,73,${.12+hot*.75})" stroke="${isRoot?'var(--acc)':'var(--line)'}" stroke-width="${isRoot?4:2}"/>
+    <text x="${POS[s][0]}" y="${POS[s][1]+4}" text-anchor="middle">${s}</text>
+    <text x="${POS[s][0]}" y="${POS[s][1]+38}" text-anchor="middle" style="fill:var(--mut)">${e.toFixed(1)}%</text>`;}
+  $('topo').innerHTML=svg;
+}
+$('go').onclick=async()=>{
+  const seed=$('seed').value,agent=$('agent').value;$('go').disabled=true;$('status').textContent='investigating…';
+  const r=await fetch(`/api/incidents/${seed}/run?agent=${agent}&reveal=true`,{method:'POST'});
+  if(!r.ok){$('status').textContent=(await r.json()).detail;$('go').disabled=false;return;}
+  const d=await r.json(),rep=d.report,gt=d.ground_truth,ok=rep.root_cause_service===gt.root&&rep.fault_type===gt.fault;
+  await draw(seed,rep.root_cause_service);
+  $('verdict').innerHTML=`<p>Root cause: <b>${rep.root_cause_service}</b> · <b>${rep.fault_type}</b><br>Fix: <code>${rep.remediation.action}</code> on <code>${rep.remediation.service}</code></p>
+   <p class="${ok?'good':'bad'}">${ok?'✓ matches ground truth':'✗ ground truth: '+gt.root+' / '+gt.fault}${gt.silent?' · silent root':''}</p>
+   <p style="color:var(--mut)">${d.trace.length} tool calls · ${d.usage.input_tokens+d.usage.output_tokens} tokens · $${d.usage.cost_usd}</p>`;
+  $('trace').innerHTML=d.trace.map((t,i)=>`<div class="step"><b>${i+1}.</b> <code>${t.tool}</code>(${Object.entries(t.args).map(([k,v])=>k+'='+v).join(', ')})<pre>${t.result.slice(0,400).replace(/</g,'&lt;')}</pre></div>`).join('');
+  $('pm').textContent=d.postmortem;$('status').textContent='done';$('go').disabled=false;
+};
+init();
+</script></body></html>
